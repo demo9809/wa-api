@@ -17,23 +17,30 @@ let reconnectTimer = null;
 let reconnectAttempts = 0;
 
 function createClient() {
+  const puppeteerConfig = {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--single-process',
+    ],
+  };
+
+  // Use system Chrome if path provided (Railway/VPS environments)
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
   return new Client({
     authStrategy: new LocalAuth({
       dataPath: path.join(__dirname, '..', 'sessions'),
     }),
-    puppeteer: {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--single-process',
-      ],
-    },
+    puppeteer: puppeteerConfig,
     webVersionCache: {
       type: 'remote',
       remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015898620-alpha.html',
