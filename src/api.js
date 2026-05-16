@@ -7,6 +7,7 @@ const { apiAuth } = require('./auth');
 const { buildMessage, TEMPLATES } = require('./templates');
 const logger = require('./logger');
 
+const QRCode = require('qrcode');
 const whatsapp = require('./client');
 const queue = require('./queue');
 
@@ -232,9 +233,7 @@ router.get(
       </body></html>`);
     }
 
-    // qrCode is a data URL (data:image/png;base64,...) or raw QR string
-    const qr = status.qrCode;
-    const imgSrc = qr.startsWith('data:') ? qr : `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+    const imgSrc = await QRCode.toDataURL(status.qrCode, { width: 300, margin: 2 });
 
     res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0f4f8">
       <h2>📱 Scan with WhatsApp</h2>
