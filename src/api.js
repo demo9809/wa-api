@@ -218,6 +218,34 @@ router.get(
   })
 );
 
+// ── GET /qr-image ──────────────────────────────────────────────────────────
+router.get(
+  '/qr-image',
+  asyncHandler(async (req, res) => {
+    const status = whatsapp.getStatus();
+
+    if (!status.qrAvailable || !status.qrCode) {
+      return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px">
+        <h2>${status.isReady ? '✅ WhatsApp Already Connected' : '⏳ QR Not Ready Yet'}</h2>
+        <p>${status.isReady ? 'No QR needed — WhatsApp is connected.' : 'Please wait a few seconds and refresh.'}</p>
+        <script>if(!${status.isReady})setTimeout(()=>location.reload(),3000)</script>
+      </body></html>`);
+    }
+
+    // qrCode is a data URL (data:image/png;base64,...) or raw QR string
+    const qr = status.qrCode;
+    const imgSrc = qr.startsWith('data:') ? qr : `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+
+    res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0f4f8">
+      <h2>📱 Scan with WhatsApp</h2>
+      <p>Go to <b>WhatsApp → Linked Devices → Link a Device</b> and scan this QR code</p>
+      <img src="${imgSrc}" style="width:300px;height:300px;border:4px solid #25D366;border-radius:12px;margin:20px auto;display:block">
+      <p style="color:#666;font-size:14px">QR expires in ~20 seconds. Page auto-refreshes.</p>
+      <script>setTimeout(()=>location.reload(),18000)</script>
+    </body></html>`);
+  })
+);
+
 // ── POST /reconnect ────────────────────────────────────────────────────────
 router.post(
   '/reconnect',
