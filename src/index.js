@@ -34,6 +34,19 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy (for rate limiting behind Nginx)
 app.set('trust proxy', 1);
 
+// ── CORS — allow PHP admin panel and localhost dev ─────────────────────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '';
+  const allowed = ['http://localhost:8080', 'https://illoo.store', 'https://wa-api.illoo.store'];
+  if (allowed.includes(origin) || !origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-api-key');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // ── Health check (no auth) ─────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
