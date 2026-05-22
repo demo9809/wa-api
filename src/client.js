@@ -4,6 +4,8 @@ require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const path = require('path');
+const https = require('https');
+const http  = require('http');
 const logger = require('./logger');
 
 const RECONNECT_DELAY_MS = parseInt(process.env.RECONNECT_DELAY_MS || '10000', 10);
@@ -27,7 +29,6 @@ function createClient() {
       '--no-first-run',
       '--no-zygote',
       '--disable-gpu',
-      '--single-process',
     ],
   };
 
@@ -162,6 +163,23 @@ async function initialize() {
     }
   });
 
+  // ── Incoming messages → CRM lead capture ──────────────────────────────────
+  client.on('message', (msg) => {
+    if (msg.fromMe) return; // ignore our own outgoing messages
+    try {
+      const raw   = msg.from || '';               // e.g. 919876543210@c.us
+      const phone = raw.replace('@c.us', '').replace('@g.us', '');
+      if (!phone || raw.includes('@g.us')) return; // skip group messages
+
+      const contact = msg._data?.notifyName || '';
+      const body    = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
+
+      notifyIncomingLead({ phone, name: contact, message: body });
+    } catch (err) {
+      logger.warn(`Incoming message handler error: ${err.message}`);
+    }
+  });
+
   try {
     await client.initialize();
   } catch (err) {
@@ -198,6 +216,43 @@ async function sendPresenceAvailable(phone) {
   } catch (_err) {
     // Non-critical — ignore silently
   }
+}
+
+/**
+ * POST to the PHP wa-incoming endpoint to upsert a lead.
+ * Fire-and-forget — never blocks the message handler.
+ */
+function notifyIncomingLead({ phone, name, message }) {
+  const incomingUrl = process.env.WA_INCOMING_URL || '';
+  if (!incomingUrl) return; // not configured — skip
+
+  const apiKey = process.env.API_KEY || '';
+  const payload = JSON.stringify({ phone, name, message });
+
+  const mod = incomingUrl.startsWith('https') ? https : http;
+  const url = new URL(incomingUrl);
+
+  const req = mod.request({
+    hostname : url.hostname,
+    port     : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
+    path     : url.pathname + url.search,
+    method   : 'POST',
+    headers  : {
+      'Content-Type'  : 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      'x-api-key'     : apiKey,
+    },
+  }, (res) => {
+    logger.debug(`wa-incoming response: ${res.statusCode} for ${phone}`);
+  });
+
+  req.on('error', (err) => {
+    logger.warn(`wa-incoming POST failed: ${err.message}`);
+  });
+
+  req.setTimeout(5000, () => { req.destroy(); });
+  req.write(payload);
+  req.end();
 }
 
 function getStatus() {

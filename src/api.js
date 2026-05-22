@@ -77,7 +77,7 @@ router.post(
 router.post(
   '/send-template',
   asyncHandler(async (req, res) => {
-    const { phone, templateId, vars, priority, orderId } = req.body;
+    const { phone, templateId, vars, priority, orderId, message: preRendered } = req.body;
 
     if (!phone || !templateId) {
       return res.status(400).json({
@@ -87,10 +87,15 @@ router.post(
     }
 
     let message;
-    try {
-      message = buildMessage(templateId, vars || {});
-    } catch (err) {
-      return res.status(400).json({ success: false, message: err.message });
+    if (preRendered && typeof preRendered === 'string' && preRendered.trim()) {
+      // Use the pre-rendered message from PHP (admin-edited templates take effect)
+      message = preRendered.trim();
+    } else {
+      try {
+        message = buildMessage(templateId, vars || {});
+      } catch (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
     }
 
     const id = queue.add(phone, message, {
@@ -242,6 +247,39 @@ router.get(
       <p style="color:#666;font-size:14px">QR expires in ~20 seconds. Page auto-refreshes.</p>
       <script>setTimeout(()=>location.reload(),18000)</script>
     </body></html>`);
+  })
+);
+
+// ── POST /bulk-send ────────────────────────────────────────────────────────
+// Body: { phones: ["91...", ...], message: "...", refId: "BCAST-1" }
+router.post(
+  '/bulk-send',
+  asyncHandler(async (req, res) => {
+    const { phones, message, refId } = req.body;
+
+    if (!Array.isArray(phones) || phones.length === 0 || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: phones (array) and message',
+      });
+    }
+
+    if (phones.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum 500 recipients per request',
+      });
+    }
+
+    let queued = 0;
+    for (const phone of phones) {
+      const id = queue.add(phone, message, { priority: 1, orderId: refId || 'BULK' });
+      if (id) queued++;
+    }
+
+    logger.info(`API /bulk-send queued ${queued}/${phones.length} messages refId=${refId}`);
+
+    res.json({ success: true, queued, total: phones.length });
   })
 );
 
