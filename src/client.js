@@ -174,7 +174,17 @@ async function initialize() {
       const contact = msg._data?.notifyName || '';
       const body    = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
 
+      logger.info(`Incoming message from ${phone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
+
+      const incomingUrl = process.env.WA_INCOMING_URL || '';
+      if (!incomingUrl) {
+        logger.warn('WA_INCOMING_URL not set — skipping lead capture and auto-reply');
+        return;
+      }
+
       const result = await notifyIncomingLead({ phone, name: contact, message: body });
+
+      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply}`);
 
       // Send auto-reply to first-time contacts after 2-second delay
       if (result && result.is_new && result.auto_reply) {
@@ -187,6 +197,8 @@ async function initialize() {
             logger.warn(`Auto-reply queue error: ${qErr.message}`);
           }
         }, 2000);
+      } else if (result && result.is_new && !result.auto_reply) {
+        logger.info(`New lead ${phone} — auto-reply disabled or not configured in settings`);
       }
     } catch (err) {
       logger.warn(`Incoming message handler error: ${err.message}`);
