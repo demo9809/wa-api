@@ -250,6 +250,48 @@ router.get(
   })
 );
 
+// ── GET /contacts ──────────────────────────────────────────────────────────
+// Returns all recent 1-on-1 chat participants (skips groups, skips our own number)
+router.get(
+  '/contacts',
+  asyncHandler(async (req, res) => {
+    const status = whatsapp.getStatus();
+    if (!status.isReady) {
+      return res.status(503).json({ success: false, message: 'WhatsApp not connected' });
+    }
+
+    // Access the underlying WA client to list chats
+    const { getClient } = require('./client');
+    const client = getClient();
+    if (!client) {
+      return res.status(503).json({ success: false, message: 'Client not available' });
+    }
+
+    const chats = await client.getChats();
+    const contacts = [];
+    const myNumber = client.info?.wid?.user || '';
+
+    for (const chat of chats) {
+      if (chat.isGroup) continue;
+      const phone = chat.id?.user || '';
+      if (!phone || phone === myNumber) continue;
+      // Only include chats that have had messages
+      if (!chat.lastMessage) continue;
+
+      const name = chat.name || chat.pushname || '';
+      const lastMsg = chat.lastMessage?.body || '';
+      contacts.push({
+        phone,
+        name,
+        lastMessage: lastMsg.substring(0, 200),
+      });
+    }
+
+    logger.info(`API /contacts returning ${contacts.length} contacts`);
+    res.json({ success: true, contacts });
+  })
+);
+
 // ── POST /bulk-send ────────────────────────────────────────────────────────
 // Body: { phones: ["91...", ...], message: "...", refId: "BCAST-1" }
 router.post(

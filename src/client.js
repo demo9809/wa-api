@@ -267,4 +267,8 @@ function getStatus() {
   };
 }
 
-module.exports = { initialize, getStatus, sendMessage, sendPresenceAvailable };
+function getClient() {
+  return clientInstance;
+}
+
+module.exports = { initialize, getStatus, sendMessage, sendPresenceAvailable, getClient };
