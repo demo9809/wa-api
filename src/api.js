@@ -328,6 +328,46 @@ router.post(
   })
 );
 
+// ── POST /send-image ───────────────────────────────────────────────────────
+// Body: { phone, imageUrl, caption }
+router.post(
+  '/send-image',
+  asyncHandler(async (req, res) => {
+    const { phone, imageUrl, caption } = req.body;
+
+    if (!phone || !imageUrl) {
+      return res.status(400).json({ success: false, message: 'Missing phone or imageUrl' });
+    }
+
+    const status = whatsapp.getStatus();
+    if (!status.isReady) {
+      return res.status(503).json({ success: false, message: 'WhatsApp not connected' });
+    }
+
+    const { getClient } = require('./client');
+    const client = getClient();
+    if (!client) return res.status(503).json({ success: false, message: 'Client not available' });
+
+    let media;
+    try {
+      media = await MessageMedia.fromUrl(imageUrl, { unsafeMime: true });
+    } catch (dlErr) {
+      return res.status(422).json({ success: false, message: `Could not download image: ${dlErr.message}` });
+    }
+
+    const formattedPhone = queue._formatPhone ? queue._formatPhone(phone) : phone + '@c.us';
+
+    try {
+      await client.sendMessage(formattedPhone, media, { caption: caption || '' });
+      logger.info(`Image sent to ${phone}`);
+      res.json({ success: true, imageSent: true });
+    } catch (err) {
+      logger.error(`Failed to send image to ${phone}: ${err.message}`);
+      res.status(500).json({ success: false, message: err.message });
+    }
+  })
+);
+
 // ── POST /send-voice ───────────────────────────────────────────────────────
 // Body: { phone, voiceUrl, message } — sends voice note + optional text
 router.post(
