@@ -164,7 +164,7 @@ async function initialize() {
   });
 
   // ── Incoming messages → CRM lead capture ──────────────────────────────────
-  client.on('message', (msg) => {
+  client.on('message', async (msg) => {
     if (msg.fromMe) return; // ignore our own outgoing messages
     try {
       const raw   = msg.from || '';               // e.g. 919876543210@c.us
@@ -174,7 +174,20 @@ async function initialize() {
       const contact = msg._data?.notifyName || '';
       const body    = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
 
-      notifyIncomingLead({ phone, name: contact, message: body });
+      const result = await notifyIncomingLead({ phone, name: contact, message: body });
+
+      // Send auto-reply to first-time contacts after 2-second delay
+      if (result && result.is_new && result.auto_reply) {
+        setTimeout(() => {
+          try {
+            const queue = require('./queue');
+            queue.add(phone, result.auto_reply, { priority: 5, orderId: 'AUTO_REPLY' });
+            logger.info(`Auto-reply queued for new contact ${phone}`);
+          } catch (qErr) {
+            logger.warn(`Auto-reply queue error: ${qErr.message}`);
+          }
+        }, 2000);
+      }
     } catch (err) {
       logger.warn(`Incoming message handler error: ${err.message}`);
     }
@@ -220,39 +233,47 @@ async function sendPresenceAvailable(phone) {
 
 /**
  * POST to the PHP wa-incoming endpoint to upsert a lead.
- * Fire-and-forget — never blocks the message handler.
+ * Returns parsed JSON response (or null on error).
  */
 function notifyIncomingLead({ phone, name, message }) {
   const incomingUrl = process.env.WA_INCOMING_URL || '';
-  if (!incomingUrl) return; // not configured — skip
+  if (!incomingUrl) return Promise.resolve(null);
 
   const apiKey = process.env.API_KEY || '';
   const payload = JSON.stringify({ phone, name, message });
 
-  const mod = incomingUrl.startsWith('https') ? https : http;
-  const url = new URL(incomingUrl);
+  return new Promise((resolve) => {
+    const mod = incomingUrl.startsWith('https') ? https : http;
+    const url = new URL(incomingUrl);
 
-  const req = mod.request({
-    hostname : url.hostname,
-    port     : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
-    path     : url.pathname + url.search,
-    method   : 'POST',
-    headers  : {
-      'Content-Type'  : 'application/json',
-      'Content-Length': Buffer.byteLength(payload),
-      'x-api-key'     : apiKey,
-    },
-  }, (res) => {
-    logger.debug(`wa-incoming response: ${res.statusCode} for ${phone}`);
+    const req = mod.request({
+      hostname : url.hostname,
+      port     : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
+      path     : url.pathname + url.search,
+      method   : 'POST',
+      headers  : {
+        'Content-Type'  : 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        'x-api-key'     : apiKey,
+      },
+    }, (res) => {
+      logger.debug(`wa-incoming response: ${res.statusCode} for ${phone}`);
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
+      });
+    });
+
+    req.on('error', (err) => {
+      logger.warn(`wa-incoming POST failed: ${err.message}`);
+      resolve(null);
+    });
+
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+    req.write(payload);
+    req.end();
   });
-
-  req.on('error', (err) => {
-    logger.warn(`wa-incoming POST failed: ${err.message}`);
-  });
-
-  req.setTimeout(5000, () => { req.destroy(); });
-  req.write(payload);
-  req.end();
 }
 
 function getStatus() {

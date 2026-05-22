@@ -3,11 +3,14 @@
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const https = require('https');
+const http  = require('http');
 const { apiAuth } = require('./auth');
 const { buildMessage, TEMPLATES } = require('./templates');
 const logger = require('./logger');
 
 const QRCode = require('qrcode');
+const { MessageMedia } = require('whatsapp-web.js');
 const whatsapp = require('./client');
 const queue = require('./queue');
 
@@ -322,6 +325,61 @@ router.post(
     logger.info(`API /bulk-send queued ${queued}/${phones.length} messages refId=${refId}`);
 
     res.json({ success: true, queued, total: phones.length });
+  })
+);
+
+// ── POST /send-voice ───────────────────────────────────────────────────────
+// Body: { phone, voiceUrl, message } — sends voice note + optional text
+router.post(
+  '/send-voice',
+  asyncHandler(async (req, res) => {
+    const { phone, voiceUrl, message } = req.body;
+
+    if (!phone || !voiceUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: phone and voiceUrl',
+      });
+    }
+
+    const status = whatsapp.getStatus();
+    if (!status.isReady) {
+      return res.status(503).json({ success: false, message: 'WhatsApp not connected' });
+    }
+
+    const { getClient } = require('./client');
+    const client = getClient();
+    if (!client) {
+      return res.status(503).json({ success: false, message: 'Client not available' });
+    }
+
+    // Download audio and create MessageMedia
+    let media;
+    try {
+      media = await MessageMedia.fromUrl(voiceUrl, { unsafeMime: true });
+    } catch (dlErr) {
+      logger.warn(`Failed to download voice from ${voiceUrl}: ${dlErr.message}`);
+      return res.status(422).json({ success: false, message: `Could not download voice file: ${dlErr.message}` });
+    }
+
+    const formattedPhone = queue._formatPhone ? queue._formatPhone(phone) : phone + (phone.includes('@') ? '' : '@c.us');
+
+    try {
+      // Send voice note first
+      await client.sendMessage(formattedPhone, media, { sendAudioAsVoice: true });
+      logger.info(`Voice note sent to ${phone}`);
+
+      // Then send text message if provided
+      if (message && message.trim()) {
+        const msgId = queue.add(phone, message.trim(), { priority: 5, orderId: 'VOICE_MSG' });
+        logger.info(`Text follow-up queued id=${msgId} after voice for ${phone}`);
+      }
+
+      res.json({ success: true, voiceSent: true });
+    } catch (sendErr) {
+      logger.error(`Failed to send voice to ${phone}: ${sendErr.message}`);
+      res.status(500).json({ success: false, message: sendErr.message });
+    }
   })
 );
 
