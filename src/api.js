@@ -283,10 +283,12 @@ router.get(
 
       const name = chat.name || chat.pushname || '';
       const lastMsg = chat.lastMessage?.body || '';
+      const lastTs  = chat.lastMessage?.timestamp || null; // Unix seconds
       contacts.push({
         phone,
         name,
-        lastMessage: lastMsg.substring(0, 200),
+        lastMessage    : lastMsg.substring(0, 200),
+        lastMessageTime: lastTs,
       });
     }
 
