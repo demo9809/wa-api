@@ -266,40 +266,55 @@ function notifyIncomingLead({ phone, name, message }) {
   const apiKey = process.env.API_SECRET_KEY || '';
   const payload = JSON.stringify({ phone, name, message });
 
-  return new Promise((resolve) => {
-    const mod = incomingUrl.startsWith('https') ? https : http;
-    const url = new URL(incomingUrl);
+  // Follow up to 3 redirects (handles http→https and non-www→www redirects)
+  function doRequest(targetUrl, redirectsLeft) {
+    return new Promise((resolve) => {
+      const mod = targetUrl.startsWith('https') ? https : http;
+      const url = new URL(targetUrl);
 
-    const req = mod.request({
-      hostname           : url.hostname,
-      port               : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
-      path               : url.pathname + url.search,
-      method             : 'POST',
-      rejectUnauthorized : false, // allow expired/self-signed cert
-      headers            : {
-        'Content-Type'  : 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-        'x-api-key'     : apiKey,
-      },
-    }, (res) => {
-      logger.info(`wa-incoming response: HTTP ${res.statusCode} for ${phone}`);
-      let body = '';
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => {
-        logger.info(`wa-incoming body for ${phone}: ${body.substring(0, 200)}`);
-        try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
+      const req = mod.request({
+        hostname           : url.hostname,
+        port               : url.port || (targetUrl.startsWith('https') ? 443 : 80),
+        path               : url.pathname + url.search,
+        method             : 'POST',
+        rejectUnauthorized : false,
+        headers            : {
+          'Content-Type'  : 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          'x-api-key'     : apiKey,
+        },
+      }, (res) => {
+        // Follow 301/302 redirects
+        if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location && redirectsLeft > 0) {
+          const redirectUrl = res.headers.location.startsWith('http')
+            ? res.headers.location
+            : new URL(res.headers.location, targetUrl).href;
+          logger.info(`wa-incoming redirect ${res.statusCode} → ${redirectUrl} for ${phone}`);
+          res.resume(); // drain response
+          resolve(doRequest(redirectUrl, redirectsLeft - 1));
+          return;
+        }
+        logger.info(`wa-incoming response: HTTP ${res.statusCode} for ${phone}`);
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          logger.info(`wa-incoming body for ${phone}: ${body.substring(0, 200)}`);
+          try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
+        });
       });
-    });
 
-    req.on('error', (err) => {
-      logger.warn(`wa-incoming POST failed: ${err.message}`);
-      resolve(null);
-    });
+      req.on('error', (err) => {
+        logger.warn(`wa-incoming POST failed: ${err.message}`);
+        resolve(null);
+      });
 
-    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
-    req.write(payload);
-    req.end();
-  });
+      req.setTimeout(8000, () => { req.destroy(); resolve(null); });
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  return doRequest(incomingUrl, 3);
 }
 
 function getStatus() {
