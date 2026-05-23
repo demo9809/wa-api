@@ -186,24 +186,22 @@ async function initialize() {
 
       logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply}`);
 
-      // Send welcome auto-reply to first-time contacts after 2-second delay
-      if (result && result.is_new && result.auto_reply) {
+      // Send welcome auto-reply (first message from any contact — new or previously synced)
+      if (result && result.auto_reply) {
         setTimeout(() => {
           try {
             const queue = require('./queue');
             queue.add(phone, result.auto_reply, { priority: 5, orderId: 'AUTO_REPLY' });
-            logger.info(`Auto-reply queued for new contact ${phone}`);
+            logger.info(`Auto-reply queued for ${phone}`);
           } catch (qErr) {
             logger.warn(`Auto-reply queue error: ${qErr.message}`);
           }
         }, 2000);
-      } else if (result && result.is_new && !result.auto_reply) {
-        logger.info(`New lead ${phone} — auto-reply disabled or not configured in settings`);
       }
 
-      // Send keyword-based reply to any contact whose message matches a rule
+      // Send keyword-based reply to any contact (new or existing) whose message matches a rule
       if (result && result.keyword_reply) {
-        const delay = (result.is_new && result.auto_reply) ? 5000 : 1500;
+        const delay = result.auto_reply ? 5000 : 1500;
         setTimeout(() => {
           try {
             const queue = require('./queue');
