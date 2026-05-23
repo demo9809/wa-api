@@ -184,9 +184,9 @@ async function initialize() {
 
       const result = await notifyIncomingLead({ phone, name: contact, message: body });
 
-      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply}`);
+      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply}`);
 
-      // Send auto-reply to first-time contacts after 2-second delay
+      // Send welcome auto-reply to first-time contacts after 2-second delay
       if (result && result.is_new && result.auto_reply) {
         setTimeout(() => {
           try {
@@ -199,6 +199,20 @@ async function initialize() {
         }, 2000);
       } else if (result && result.is_new && !result.auto_reply) {
         logger.info(`New lead ${phone} — auto-reply disabled or not configured in settings`);
+      }
+
+      // Send keyword-based reply to any contact whose message matches a rule
+      if (result && result.keyword_reply) {
+        const delay = (result.is_new && result.auto_reply) ? 5000 : 1500;
+        setTimeout(() => {
+          try {
+            const queue = require('./queue');
+            queue.add(phone, result.keyword_reply, { priority: 5, orderId: 'KEYWORD_REPLY' });
+            logger.info(`Keyword auto-reply queued for ${phone}`);
+          } catch (qErr) {
+            logger.warn(`Keyword auto-reply queue error: ${qErr.message}`);
+          }
+        }, delay);
       }
     } catch (err) {
       logger.warn(`Incoming message handler error: ${err.message}`);
@@ -251,7 +265,7 @@ function notifyIncomingLead({ phone, name, message }) {
   const incomingUrl = process.env.WA_INCOMING_URL || '';
   if (!incomingUrl) return Promise.resolve(null);
 
-  const apiKey = process.env.API_KEY || '';
+  const apiKey = process.env.API_SECRET_KEY || '';
   const payload = JSON.stringify({ phone, name, message });
 
   return new Promise((resolve) => {
