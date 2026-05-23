@@ -273,11 +273,12 @@ function notifyIncomingLead({ phone, name, message }) {
     const url = new URL(incomingUrl);
 
     const req = mod.request({
-      hostname : url.hostname,
-      port     : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
-      path     : url.pathname + url.search,
-      method   : 'POST',
-      headers  : {
+      hostname           : url.hostname,
+      port               : url.port || (incomingUrl.startsWith('https') ? 443 : 80),
+      path               : url.pathname + url.search,
+      method             : 'POST',
+      rejectUnauthorized : false, // allow expired/self-signed cert
+      headers            : {
         'Content-Type'  : 'application/json',
         'Content-Length': Buffer.byteLength(payload),
         'x-api-key'     : apiKey,
