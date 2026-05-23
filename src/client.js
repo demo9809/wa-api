@@ -1,7 +1,7 @@
 'use strict';
 
 require('dotenv').config();
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const path = require('path');
 const https = require('https');
@@ -167,14 +167,37 @@ async function initialize() {
   client.on('message', async (msg) => {
     if (msg.fromMe) return; // ignore our own outgoing messages
     try {
-      const raw   = msg.from || '';               // e.g. 919876543210@c.us
+      const raw   = msg.from || '';               // e.g. 919876543210@c.us or @lid
       const phone = raw.replace('@c.us', '').replace('@g.us', '');
       if (!phone || raw.includes('@g.us')) return; // skip group messages
 
       const contact = msg._data?.notifyName || '';
-      const body    = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
+      const msgType = msg.type || 'text';
+      let body = '';
+      let orderData = {};
 
-      logger.info(`Incoming message from ${phone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
+      if (msg.type === 'order') {
+        // WhatsApp cart/order message
+        const order = msg._data?.order || {};
+        const itemCount = order.itemCount || 1;
+        // price is stored in sub-units (paise for INR); divide by 100 for rupees
+        const rawPrice  = order.price != null ? order.price : null;
+        const priceRs   = rawPrice != null ? Math.round(rawPrice / 100) : null;
+        const orderId   = order.orderId || msg.orderId || '';
+        const currency  = order.currency || 'INR';
+        orderData = {
+          order_id   : orderId,
+          item_count : itemCount,
+          price_raw  : rawPrice,
+          price_rs   : priceRs,
+          currency,
+        };
+        body = `CART: ${itemCount} item(s)${priceRs != null ? ' ₹' + priceRs : ''}`;
+        logger.info(`Incoming cart order from ${phone} (${contact || 'unknown'}): ${body} orderId=${orderId}`);
+      } else {
+        body = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
+        logger.info(`Incoming message from ${phone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
+      }
 
       const incomingUrl = process.env.WA_INCOMING_URL || '';
       if (!incomingUrl) {
@@ -182,12 +205,42 @@ async function initialize() {
         return;
       }
 
-      const result = await notifyIncomingLead({ phone, name: contact, message: body });
+      const result = await notifyIncomingLead({ phone, name: contact, message: body, type: msgType, orderData });
 
-      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply}`);
+      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url}`);
 
-      // Send welcome auto-reply (first message from any contact — new or previously synced)
+      // ── Cart reply (order/cart message) ──────────────────────────────────
+      if (result && result.cart_reply) {
+        setTimeout(() => {
+          try {
+            const queue = require('./queue');
+            queue.add(phone, result.cart_reply, { priority: 8, orderId: 'CART_REPLY' });
+            logger.info(`Cart reply queued for ${phone}`);
+          } catch (qErr) {
+            logger.warn(`Cart reply queue error: ${qErr.message}`);
+          }
+        }, 1500);
+      }
+
+      // ── Cart voice note ───────────────────────────────────────────────────
+      if (result && result.cart_voice_url) {
+        const voiceDelay = result.cart_reply ? 4000 : 2000;
+        setTimeout(async () => {
+          try {
+            if (!isReady || !clientInstance) return;
+            const media = await MessageMedia.fromUrl(result.cart_voice_url, { unsafeMime: true });
+            const dest  = phone.includes('@') ? phone : phone + '@c.us';
+            await clientInstance.sendMessage(dest, media, { sendAudioAsVoice: true });
+            logger.info(`Cart voice note sent to ${phone}`);
+          } catch (vErr) {
+            logger.warn(`Cart voice note error for ${phone}: ${vErr.message}`);
+          }
+        }, voiceDelay);
+      }
+
+      // ── Welcome auto-reply (first message from any contact) ───────────────
       if (result && result.auto_reply) {
+        const arDelay = result.cart_reply ? 7000 : 2000;
         setTimeout(() => {
           try {
             const queue = require('./queue');
@@ -196,10 +249,10 @@ async function initialize() {
           } catch (qErr) {
             logger.warn(`Auto-reply queue error: ${qErr.message}`);
           }
-        }, 2000);
+        }, arDelay);
       }
 
-      // Send keyword-based reply to any contact (new or existing) whose message matches a rule
+      // ── Keyword-based reply ───────────────────────────────────────────────
       if (result && result.keyword_reply) {
         const delay = result.auto_reply ? 5000 : 1500;
         setTimeout(() => {
@@ -258,13 +311,19 @@ async function sendPresenceAvailable(phone) {
 /**
  * POST to the PHP wa-incoming endpoint to upsert a lead.
  * Returns parsed JSON response (or null on error).
+ * @param {object} params
+ * @param {string} params.phone      - WhatsApp phone / ID
+ * @param {string} params.name       - Contact display name
+ * @param {string} params.message    - Message body (text or description for orders)
+ * @param {string} [params.type]     - Message type: 'text' | 'order' (default: 'text')
+ * @param {object} [params.orderData]- Cart/order details (for type='order')
  */
-function notifyIncomingLead({ phone, name, message }) {
+function notifyIncomingLead({ phone, name, message, type = 'text', orderData = {} }) {
   const incomingUrl = process.env.WA_INCOMING_URL || '';
   if (!incomingUrl) return Promise.resolve(null);
 
   const apiKey = process.env.API_SECRET_KEY || '';
-  const payload = JSON.stringify({ phone, name, message });
+  const payload = JSON.stringify({ phone, name, message, type, order_data: orderData });
 
   // Follow up to 3 redirects (handles http→https and non-www→www redirects)
   function doRequest(targetUrl, redirectsLeft) {
