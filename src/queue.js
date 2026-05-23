@@ -106,8 +106,15 @@ class MessageQueue {
   }
 
   _formatPhone(phone) {
+    const s = String(phone);
+
+    // If already a full WhatsApp ID (contains @lid or @c.us), use as-is
+    if (s.includes('@')) {
+      return s;
+    }
+
     // Strip everything except digits
-    const digits = String(phone).replace(/\D/g, '');
+    const digits = s.replace(/\D/g, '');
 
     // If 10 digits (Indian mobile without country code), add '91'
     if (digits.length === 10) {
