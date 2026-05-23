@@ -252,18 +252,40 @@ async function initialize() {
         }, arDelay);
       }
 
-      // ── Keyword-based reply ───────────────────────────────────────────────
+      // ── Keyword-based reply (text) ────────────────────────────────────────
       if (result && result.keyword_reply) {
         const delay = result.auto_reply ? 5000 : 1500;
         setTimeout(() => {
           try {
             const queue = require('./queue');
             queue.add(phone, result.keyword_reply, { priority: 5, orderId: 'KEYWORD_REPLY' });
-            logger.info(`Keyword auto-reply queued for ${phone}`);
+            logger.info(`Keyword text reply queued for ${phone}`);
           } catch (qErr) {
             logger.warn(`Keyword auto-reply queue error: ${qErr.message}`);
           }
         }, delay);
+      }
+
+      // ── Keyword-based reply (audio / image) ──────────────────────────────
+      if (result && result.keyword_reply_media_url && result.keyword_reply_media_type !== 'none') {
+        const baseDelay  = result.auto_reply ? 5000 : 1500;
+        const mediaDelay = result.keyword_reply ? baseDelay + 2000 : baseDelay;
+        setTimeout(async () => {
+          try {
+            if (!isReady || !clientInstance) return;
+            const media = await MessageMedia.fromUrl(result.keyword_reply_media_url, { unsafeMime: true });
+            const dest  = phone.includes('@') ? phone : phone + '@c.us';
+            if (result.keyword_reply_media_type === 'audio') {
+              await clientInstance.sendMessage(dest, media, { sendAudioAsVoice: true });
+              logger.info(`Keyword voice reply sent to ${phone}`);
+            } else {
+              await clientInstance.sendMessage(dest, media);
+              logger.info(`Keyword image reply sent to ${phone}`);
+            }
+          } catch (mErr) {
+            logger.warn(`Keyword media reply error for ${phone}: ${mErr.message}`);
+          }
+        }, mediaDelay);
       }
     } catch (err) {
       logger.warn(`Incoming message handler error: ${err.message}`);
