@@ -282,10 +282,11 @@ function notifyIncomingLead({ phone, name, message }) {
         'x-api-key'     : apiKey,
       },
     }, (res) => {
-      logger.debug(`wa-incoming response: ${res.statusCode} for ${phone}`);
+      logger.info(`wa-incoming response: HTTP ${res.statusCode} for ${phone}`);
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
+        logger.info(`wa-incoming body for ${phone}: ${body.substring(0, 200)}`);
         try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
       });
     });
