@@ -10,7 +10,7 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const QUEUE_FILE = path.join(DATA_DIR, 'queue.json');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 
-const MAX_DAILY_MESSAGES = parseInt(process.env.MAX_DAILY_MESSAGES || '150', 10);
+const DEFAULT_DAILY_MESSAGES = parseInt(process.env.MAX_DAILY_MESSAGES || '300', 10);
 const MIN_DELAY_MS = parseInt(process.env.MIN_DELAY_MS || '4000', 10);
 const MAX_DELAY_MS = parseInt(process.env.MAX_DELAY_MS || '10000', 10);
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
@@ -26,6 +26,7 @@ class MessageQueue {
     this.sent = [];
     this.failed = [];
     this.client = null;
+    this.maxDailyMessages = DEFAULT_DAILY_MESSAGES;
 
     this._ensureDirs();
     this._loadState();
@@ -190,8 +191,8 @@ class MessageQueue {
       this._checkDailyReset();
 
       // Check daily limit
-      if (this.todayCount >= MAX_DAILY_MESSAGES) {
-        logger.warn(`Daily limit reached (${this.todayCount}/${MAX_DAILY_MESSAGES}). Queue paused until midnight.`);
+      if (this.todayCount >= this.maxDailyMessages) {
+        logger.warn(`Daily limit reached (${this.todayCount}/${this.maxDailyMessages}). Queue paused until midnight.`);
         break;
       }
 
@@ -237,7 +238,7 @@ class MessageQueue {
         this._saveState();
 
         logger.info(
-          `Sent message id=${item.id} to ${item.rawPhone} orderId=${item.orderId} [${this.todayCount}/${MAX_DAILY_MESSAGES} today]`
+          `Sent message id=${item.id} to ${item.rawPhone} orderId=${item.orderId} [${this.todayCount}/${this.maxDailyMessages} today]`
         );
       } catch (err) {
         item.retries++;
@@ -278,14 +279,21 @@ class MessageQueue {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  setDailyLimit(n) {
+    const limit = Math.max(10, Math.min(2000, parseInt(n, 10) || DEFAULT_DAILY_MESSAGES));
+    this.maxDailyMessages = limit;
+    logger.info(`Daily message limit updated to ${limit}`);
+    return limit;
+  }
+
   getStatus() {
     this._checkDailyReset();
     return {
       pending: this.queue.length,
       processing: this.processing,
       todayCount: this.todayCount,
-      dailyLimit: MAX_DAILY_MESSAGES,
-      remaining: Math.max(0, MAX_DAILY_MESSAGES - this.todayCount),
+      dailyLimit: this.maxDailyMessages,
+      remaining: Math.max(0, this.maxDailyMessages - this.todayCount),
       recentSent: this.sent.slice(-10),
       recentFailed: this.failed.slice(-10),
     };

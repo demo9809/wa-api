@@ -436,4 +436,33 @@ router.post(
   })
 );
 
+// ── GET /config ─────────────────────────────────────────────────────────────
+router.get(
+  '/config',
+  asyncHandler(async (req, res) => {
+    const status = queue.getStatus();
+    res.json({
+      success: true,
+      dailyLimit: status.dailyLimit,
+    });
+  })
+);
+
+// ── POST /config ─────────────────────────────────────────────────────────────
+// Body: { dailyLimit: 300 }
+router.post(
+  '/config',
+  asyncHandler(async (req, res) => {
+    const { dailyLimit } = req.body;
+
+    if (dailyLimit !== undefined) {
+      const newLimit = queue.setDailyLimit(dailyLimit);
+      logger.info(`Config updated via API: dailyLimit=${newLimit}`);
+      return res.json({ success: true, dailyLimit: newLimit });
+    }
+
+    res.status(400).json({ success: false, message: 'No config fields provided' });
+  })
+);
+
 module.exports = router;
