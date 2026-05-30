@@ -173,7 +173,26 @@ async function initialize() {
 
       const contact = msg._data?.notifyName || '';
       const msgType = msg.type || 'text';
-      logger.info(`[AI-DBG] raw=${raw} phone=${phone} type=${msgType} body="${(msg.body||'').substring(0,40)}"`);
+
+      // Resolve @lid to real phone number — newer WhatsApp versions send LID instead of @c.us
+      let resolvedPhone = phone;
+      if (raw.includes('@lid')) {
+        try {
+          const contactObj = await msg.getContact();
+          const realNum = contactObj?.number || contactObj?.id?.user || '';
+          if (realNum && !realNum.includes('@')) {
+            resolvedPhone = realNum;
+            logger.info(`Resolved LID ${phone} → ${resolvedPhone}`);
+          } else {
+            // Fallback: strip @lid suffix, use numeric part of LID won't match — skip
+            logger.warn(`Could not resolve LID ${phone} to real phone number`);
+          }
+        } catch (lidErr) {
+          logger.warn(`LID resolution error for ${phone}: ${lidErr.message}`);
+        }
+      }
+
+      logger.info(`[AI-DBG] raw=${raw} phone=${resolvedPhone} type=${msgType} body="${(msg.body||'').substring(0,40)}"`);
       logger.info(`[AI-DBG] WA_INCOMING_URL=${process.env.WA_INCOMING_URL || '(not set)'} API_KEY_SET=${!!(process.env.API_SECRET_KEY)}`);
       let body = '';
       let orderData = {};
@@ -195,10 +214,10 @@ async function initialize() {
           currency,
         };
         body = `CART: ${itemCount} item(s)${priceRs != null ? ' ₹' + priceRs : ''}`;
-        logger.info(`Incoming cart order from ${phone} (${contact || 'unknown'}): ${body} orderId=${orderId}`);
+        logger.info(`Incoming cart order from ${resolvedPhone} (${contact || 'unknown'}): ${body} orderId=${orderId}`);
       } else {
         body = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
-        logger.info(`Incoming message from ${phone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
+        logger.info(`Incoming message from ${resolvedPhone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
       }
 
       const incomingUrl = process.env.WA_INCOMING_URL || '';
@@ -207,9 +226,9 @@ async function initialize() {
         return;
       }
 
-      const result = await notifyIncomingLead({ phone, name: contact, message: body, type: msgType, orderData });
+      const result = await notifyIncomingLead({ phone: resolvedPhone, name: contact, message: body, type: msgType, orderData });
 
-      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url} ai_reply=${!!result?.ai_reply}`);
+      logger.info(`notifyIncomingLead result for ${resolvedPhone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url} ai_reply=${!!result?.ai_reply}`);
       logger.info(`[AI-DBG] full result: ${JSON.stringify(result).substring(0, 300)}`);
 
       // ── Cart reply (order/cart message) ──────────────────────────────────
@@ -217,8 +236,8 @@ async function initialize() {
         setTimeout(() => {
           try {
             const queue = require('./queue');
-            queue.add(phone, result.cart_reply, { priority: 8, orderId: 'CART_REPLY' });
-            logger.info(`Cart reply queued for ${phone}`);
+            queue.add(resolvedPhone, result.cart_reply, { priority: 8, orderId: 'CART_REPLY' });
+            logger.info(`Cart reply queued for ${resolvedPhone}`);
           } catch (qErr) {
             logger.warn(`Cart reply queue error: ${qErr.message}`);
           }
@@ -232,11 +251,11 @@ async function initialize() {
           try {
             if (!isReady || !clientInstance) return;
             const media = await MessageMedia.fromUrl(result.cart_voice_url, { unsafeMime: true });
-            const dest  = phone.includes('@') ? phone : phone + '@c.us';
+            const dest  = resolvedPhone.includes('@') ? resolvedPhone : resolvedPhone + '@c.us';
             await clientInstance.sendMessage(dest, media, { sendAudioAsVoice: true });
-            logger.info(`Cart voice note sent to ${phone}`);
+            logger.info(`Cart voice note sent to ${resolvedPhone}`);
           } catch (vErr) {
-            logger.warn(`Cart voice note error for ${phone}: ${vErr.message}`);
+            logger.warn(`Cart voice note error for ${resolvedPhone}: ${vErr.message}`);
           }
         }, voiceDelay);
       }
@@ -247,8 +266,8 @@ async function initialize() {
         setTimeout(() => {
           try {
             const queue = require('./queue');
-            queue.add(phone, result.auto_reply, { priority: 5, orderId: 'AUTO_REPLY' });
-            logger.info(`Auto-reply queued for ${phone}`);
+            queue.add(resolvedPhone, result.auto_reply, { priority: 5, orderId: 'AUTO_REPLY' });
+            logger.info(`Auto-reply queued for ${resolvedPhone}`);
           } catch (qErr) {
             logger.warn(`Auto-reply queue error: ${qErr.message}`);
           }
@@ -261,8 +280,8 @@ async function initialize() {
         setTimeout(() => {
           try {
             const queue = require('./queue');
-            queue.add(phone, result.keyword_reply, { priority: 5, orderId: 'KEYWORD_REPLY' });
-            logger.info(`Keyword text reply queued for ${phone}`);
+            queue.add(resolvedPhone, result.keyword_reply, { priority: 5, orderId: 'KEYWORD_REPLY' });
+            logger.info(`Keyword text reply queued for ${resolvedPhone}`);
           } catch (qErr) {
             logger.warn(`Keyword auto-reply queue error: ${qErr.message}`);
           }
@@ -276,8 +295,8 @@ async function initialize() {
         setTimeout(() => {
           try {
             const queue = require('./queue');
-            queue.add(phone, result.ai_reply, { priority: 6, orderId: 'AI_REPLY' });
-            logger.info(`AI reply queued for ${phone}`);
+            queue.add(resolvedPhone, result.ai_reply, { priority: 6, orderId: 'AI_REPLY' });
+            logger.info(`AI reply queued for ${resolvedPhone}`);
           } catch (qErr) {
             logger.warn(`AI reply queue error: ${qErr.message}`);
           }
@@ -292,16 +311,16 @@ async function initialize() {
           try {
             if (!isReady || !clientInstance) return;
             const media = await MessageMedia.fromUrl(result.keyword_reply_media_url, { unsafeMime: true });
-            const dest  = phone.includes('@') ? phone : phone + '@c.us';
+            const dest  = resolvedPhone.includes('@') ? resolvedPhone : resolvedPhone + '@c.us';
             if (result.keyword_reply_media_type === 'audio') {
               await clientInstance.sendMessage(dest, media, { sendAudioAsVoice: true });
-              logger.info(`Keyword voice reply sent to ${phone}`);
+              logger.info(`Keyword voice reply sent to ${resolvedPhone}`);
             } else {
               await clientInstance.sendMessage(dest, media);
-              logger.info(`Keyword image reply sent to ${phone}`);
+              logger.info(`Keyword image reply sent to ${resolvedPhone}`);
             }
           } catch (mErr) {
-            logger.warn(`Keyword media reply error for ${phone}: ${mErr.message}`);
+            logger.warn(`Keyword media reply error for ${resolvedPhone}: ${mErr.message}`);
           }
         }, mediaDelay);
       }
