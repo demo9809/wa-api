@@ -179,13 +179,35 @@ async function initialize() {
       if (raw.includes('@lid')) {
         try {
           const contactObj = await msg.getContact();
-          const realNum = contactObj?.number || contactObj?.id?.user || '';
-          if (realNum && !realNum.includes('@')) {
-            resolvedPhone = realNum;
+          // Dump all possible phone fields to find the real one
+          const candidates = {
+            'contact.number':                  contactObj?.number,
+            'contact.id.user':                 contactObj?.id?.user,
+            'contact.id._serialized':          contactObj?.id?._serialized,
+            'contact._data.phoneNumber':       contactObj?._data?.phoneNumber,
+            'contact._data.lid':               contactObj?._data?.lid,
+            'msg._data.id.user':               msg._data?.id?.user,
+            'msg._data.id._serialized':        msg._data?.id?._serialized,
+            'msg._data.author':                msg._data?.author,
+            'msg._data.from':                  msg._data?.from,
+            'msg._data.participant':           msg._data?.participant,
+            'msg._data.senderPn':              msg._data?.senderPn,
+            'msg._data.notifyJid':             msg._data?.notifyJid,
+          };
+          logger.info(`[LID-DBG] All candidate fields: ${JSON.stringify(candidates)}`);
+
+          // Try each field in order of reliability — pick first @c.us one
+          const cusCandidates = Object.values(candidates).filter(v =>
+            v && typeof v === 'string' && (v.includes('@c.us') || /^91\d{10}$/.test(v) || /^\d{10}$/.test(v))
+          );
+          logger.info(`[LID-DBG] @c.us / phone candidates: ${JSON.stringify(cusCandidates)}`);
+
+          const bestMatch = cusCandidates[0];
+          if (bestMatch) {
+            resolvedPhone = bestMatch.replace('@c.us', '');
             logger.info(`Resolved LID ${phone} → ${resolvedPhone}`);
           } else {
-            // Fallback: strip @lid suffix, use numeric part of LID won't match — skip
-            logger.warn(`Could not resolve LID ${phone} to real phone number`);
+            logger.warn(`Could not resolve LID ${phone} — no valid phone field found. Using LID as-is.`);
           }
         } catch (lidErr) {
           logger.warn(`LID resolution error for ${phone}: ${lidErr.message}`);
