@@ -64,6 +64,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
     env: process.env.NODE_ENV || 'development',
+    aiSupport: true,
+    deployedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
   });
 });
 

@@ -173,6 +173,8 @@ async function initialize() {
 
       const contact = msg._data?.notifyName || '';
       const msgType = msg.type || 'text';
+      logger.info(`[AI-DBG] raw=${raw} phone=${phone} type=${msgType} body="${(msg.body||'').substring(0,40)}"`);
+      logger.info(`[AI-DBG] WA_INCOMING_URL=${process.env.WA_INCOMING_URL || '(not set)'} API_KEY_SET=${!!(process.env.API_SECRET_KEY)}`);
       let body = '';
       let orderData = {};
 
@@ -208,6 +210,7 @@ async function initialize() {
       const result = await notifyIncomingLead({ phone, name: contact, message: body, type: msgType, orderData });
 
       logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url} ai_reply=${!!result?.ai_reply}`);
+      logger.info(`[AI-DBG] full result: ${JSON.stringify(result).substring(0, 300)}`);
 
       // ── Cart reply (order/cart message) ──────────────────────────────────
       if (result && result.cart_reply) {
