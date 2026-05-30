@@ -207,7 +207,7 @@ async function initialize() {
 
       const result = await notifyIncomingLead({ phone, name: contact, message: body, type: msgType, orderData });
 
-      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url}`);
+      logger.info(`notifyIncomingLead result for ${phone}: is_new=${result?.is_new} auto_reply=${!!result?.auto_reply} keyword_reply=${!!result?.keyword_reply} cart_reply=${!!result?.cart_reply} cart_voice=${!!result?.cart_voice_url} ai_reply=${!!result?.ai_reply}`);
 
       // ── Cart reply (order/cart message) ──────────────────────────────────
       if (result && result.cart_reply) {
@@ -264,6 +264,21 @@ async function initialize() {
             logger.warn(`Keyword auto-reply queue error: ${qErr.message}`);
           }
         }, delay);
+      }
+
+      // ── AI-generated reply ────────────────────────────────────────────────
+      if (result && result.ai_reply && !result.keyword_reply) {
+        // Simulate natural typing delay: 1-3 seconds
+        const aiDelay = 1000 + Math.floor(Math.random() * 2000);
+        setTimeout(() => {
+          try {
+            const queue = require('./queue');
+            queue.add(phone, result.ai_reply, { priority: 6, orderId: 'AI_REPLY' });
+            logger.info(`AI reply queued for ${phone}`);
+          } catch (qErr) {
+            logger.warn(`AI reply queue error: ${qErr.message}`);
+          }
+        }, aiDelay);
       }
 
       // ── Keyword-based reply (audio / image) ──────────────────────────────
