@@ -212,6 +212,11 @@ async function initialize() {
         };
         body = `CART: ${itemCount} item(s)${priceRs != null ? ' ₹' + priceRs : ''}`;
         logger.info(`Incoming cart order from ${resolvedPhone} (${contact || 'unknown'}): ${body} orderId=${orderId}`);
+      } else if (['image','photo','video','document','sticker'].includes(msgType)) {
+        // Customer shared media — pass a signal to PHP so AI can respond appropriately
+        const caption = typeof msg.body === 'string' ? msg.body.trim() : '';
+        body = `[MEDIA_SHARED type=${msgType}]${caption ? ' caption: ' + caption : ''}`;
+        logger.info(`Incoming media (${msgType}) from ${resolvedPhone} (${contact || 'unknown'})`);
       } else {
         body = typeof msg.body === 'string' ? msg.body.substring(0, 500) : '';
         logger.info(`Incoming message from ${resolvedPhone} (${contact || 'unknown'}): "${body.substring(0, 60)}"`);
